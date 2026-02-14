@@ -1,0 +1,39 @@
+-- Circles V1.1.1 - Scheduled jobs via pg_cron
+--
+-- PRIMARY matching is now event-driven: triggered immediately when a user
+-- joins the queue (mobile calls the match-users Edge Function with mode "event").
+-- The daily job below is a FALLBACK SWEEP for users who couldn't be matched
+-- in real-time (not enough compatible users at the time).
+--
+-- NOTE: pg_cron is only available on Supabase Pro plan and above.
+-- For Free tier, use an external cron service (e.g., GitHub Actions, cron-job.org)
+-- to POST to the Edge Functions on a schedule.
+
+-- The pg_net extension is needed to make HTTP calls from pg_cron
+-- CREATE EXTENSION IF NOT EXISTS "pg_net";
+
+-- Fallback: sweep unmatched users daily at 9 AM UTC (batch mode)
+-- SELECT cron.schedule(
+--     'daily-matching-sweep',
+--     '0 9 * * *',
+--     $$SELECT net.http_post(
+--         url := current_setting('app.settings.supabase_url') || '/functions/v1/match-users',
+--         headers := jsonb_build_object(
+--             'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key'),
+--             'Content-Type', 'application/json'
+--         ),
+--         body := '{"mode": "batch"}'::jsonb
+--     )$$
+-- );
+
+-- Deliver weekly prompts every Monday at 9 AM UTC
+-- SELECT cron.schedule(
+--     'weekly-prompts',
+--     '0 9 * * 1',
+--     $$SELECT net.http_post(
+--         url := current_setting('app.settings.supabase_url') || '/functions/v1/deliver-prompts',
+--         headers := jsonb_build_object(
+--             'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key')
+--         )
+--     )$$
+-- );

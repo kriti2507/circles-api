@@ -1,0 +1,20 @@
+{
+  "name": "circles-api",
+  "version": "1.1.0",
+  "description": "Circles backend — Supabase project with migrations, RLS policies, and Edge Functions",
+  "scripts": {
+    "start": "supabase start",
+    "stop": "supabase stop",
+    "status": "supabase status",
+    "reset": "supabase db reset",
+    "migrate": "supabase db push",
+    "functions:serve": "supabase functions serve",
+    "generate-types": "bash scripts/generate-types.sh",
+    "generate-types:remote": "bash scripts/generate-types.sh --remote",
+    "deploy": "bash scripts/deploy.sh",
+    "studio": "open http://localhost:54323"
+  },
+  "keywords": ["circles", "supabase", "backend"],
+  "license": "UNLICENSED",
+  "private": true
+}

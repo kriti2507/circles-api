@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Supabase
+supabase/.temp/
+supabase/.branches/
+
+# Debug logs
+*.log
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Certificates and keys
+*.pem
+*.p8
+*.p12
+*.key
+
+# Build output
+dist/
