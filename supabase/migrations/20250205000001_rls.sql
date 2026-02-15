@@ -55,10 +55,7 @@ CREATE POLICY "View messages" ON messages
             WHERE user_id = auth.uid() AND status = 'active'
         )
         OR
-        activity_id IN (
-            SELECT activity_id FROM activity_participants
-            WHERE user_id = auth.uid() AND status = 'approved'
-        )
+        (activity_id IS NOT NULL AND is_activity_participant(activity_id, auth.uid()))
     );
 
 CREATE POLICY "Send messages" ON messages
@@ -70,22 +67,17 @@ CREATE POLICY "Send messages" ON messages
                 WHERE user_id = auth.uid() AND status = 'active'
             )
             OR
-            activity_id IN (
-                SELECT activity_id FROM activity_participants
-                WHERE user_id = auth.uid() AND status = 'approved'
-            )
+            (activity_id IS NOT NULL AND is_activity_participant(activity_id, auth.uid()))
         )
     );
 
 -- ACTIVITIES: Anyone can view open activities, participants can view all
+-- Uses SECURITY DEFINER helper to avoid infinite recursion with activity_participants policies
 CREATE POLICY "View open activities" ON activities
     FOR SELECT USING (
         status = 'open'
         OR host_id = auth.uid()
-        OR EXISTS (
-            SELECT 1 FROM activity_participants
-            WHERE activity_id = activities.id AND user_id = auth.uid()
-        )
+        OR is_activity_participant(id, auth.uid())
     );
 
 CREATE POLICY "Create activities" ON activities
@@ -98,10 +90,11 @@ CREATE POLICY "Host can delete activity" ON activities
     FOR DELETE USING (host_id = auth.uid());
 
 -- ACTIVITY PARTICIPANTS: Users can join, hosts can manage
+-- Uses SECURITY DEFINER helper to avoid infinite recursion with activities policies
 CREATE POLICY "View participants" ON activity_participants
     FOR SELECT USING (
         user_id = auth.uid()
-        OR activity_id IN (SELECT id FROM activities WHERE host_id = auth.uid())
+        OR activity_id IN (SELECT get_hosted_activity_ids(auth.uid()))
     );
 
 CREATE POLICY "Request to join" ON activity_participants
@@ -109,7 +102,7 @@ CREATE POLICY "Request to join" ON activity_participants
 
 CREATE POLICY "Host can approve/decline" ON activity_participants
     FOR UPDATE USING (
-        activity_id IN (SELECT id FROM activities WHERE host_id = auth.uid())
+        activity_id IN (SELECT get_hosted_activity_ids(auth.uid()))
         OR user_id = auth.uid()
     );
 
