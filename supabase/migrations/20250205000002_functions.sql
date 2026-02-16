@@ -1,20 +1,5 @@
 -- Circles V1.1.0 - Database functions and triggers
 
--- Helper: check if user is a participant in an activity (bypasses RLS to break recursion)
-CREATE OR REPLACE FUNCTION is_activity_participant(p_activity_id UUID, p_user_id UUID)
-RETURNS BOOLEAN AS $$
-    SELECT EXISTS (
-        SELECT 1 FROM activity_participants
-        WHERE activity_id = p_activity_id AND user_id = p_user_id
-    );
-$$ LANGUAGE sql SECURITY DEFINER SET search_path = public;
-
--- Helper: get activity IDs hosted by a user (bypasses RLS to break recursion)
-CREATE OR REPLACE FUNCTION get_hosted_activity_ids(p_user_id UUID)
-RETURNS SETOF UUID AS $$
-    SELECT id FROM activities WHERE host_id = p_user_id;
-$$ LANGUAGE sql SECURITY DEFINER SET search_path = public;
-
 -- Auto-update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$

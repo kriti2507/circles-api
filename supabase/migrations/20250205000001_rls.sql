@@ -1,5 +1,19 @@
 -- Circles V1.1.0 - Row Level Security policies
 
+-- RLS helper functions (SECURITY DEFINER to break circular policy references)
+CREATE OR REPLACE FUNCTION is_activity_participant(p_activity_id UUID, p_user_id UUID)
+RETURNS BOOLEAN AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM activity_participants
+        WHERE activity_id = p_activity_id AND user_id = p_user_id
+    );
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION get_hosted_activity_ids(p_user_id UUID)
+RETURNS SETOF UUID AS $$
+    SELECT id FROM activities WHERE host_id = p_user_id;
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = public;
+
 -- Enable RLS on all tables
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE circles ENABLE ROW LEVEL SECURITY;

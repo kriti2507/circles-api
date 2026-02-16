@@ -7,15 +7,15 @@ import * as handlers from '../handlers/auth.handlers';
 export const authRoutes = Router();
 
 authRoutes.post(
-  '/request-code',
-  validate(z.object({ phone: z.string().min(1) })),
-  handlers.requestCode
+  '/signup',
+  validate(z.object({ email: z.string().email(), password: z.string().min(6) })),
+  handlers.signup
 );
 
 authRoutes.post(
-  '/verify-code',
-  validate(z.object({ phone: z.string().min(1), code: z.string().min(1) })),
-  handlers.verifyCode
+  '/signin',
+  validate(z.object({ email: z.string().email(), password: z.string().min(1) })),
+  handlers.signin
 );
 
 authRoutes.post('/refresh', handlers.refresh);

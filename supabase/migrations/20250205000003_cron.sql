@@ -26,6 +26,13 @@
 --     )$$
 -- );
 
+-- Expire past activities every hour
+-- SELECT cron.schedule(
+--     'expire-past-activities',
+--     '0 * * * *',
+--     $$SELECT expire_past_activities()$$
+-- );
+
 -- Deliver weekly prompts every Monday at 9 AM UTC
 -- SELECT cron.schedule(
 --     'weekly-prompts',

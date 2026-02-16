@@ -2,8 +2,10 @@
 
 interface DbUser {
   id: string;
-  phone: string;
-  phone_verified: boolean;
+  phone?: string | null;
+  phone_verified?: boolean;
+  email?: string | null;
+  email_verified?: boolean;
   display_name: string;
   bio?: string | null;
   avatar_url?: string | null;
@@ -21,8 +23,10 @@ interface DbUser {
 export function mapUser(row: DbUser) {
   return {
     id: row.id,
-    phone: row.phone,
-    phoneVerified: row.phone_verified,
+    email: row.email ?? '',
+    emailVerified: row.email_verified ?? false,
+    phone: row.phone ?? undefined,
+    phoneVerified: row.phone_verified ?? false,
     displayName: row.display_name,
     bio: row.bio ?? undefined,
     avatarUrl: row.avatar_url ?? undefined,

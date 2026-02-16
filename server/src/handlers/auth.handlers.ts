@@ -4,61 +4,77 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/errors';
 import { mapUser } from '../utils/caseTransform';
 
-export const requestCode = asyncHandler(async (req: Request, res: Response) => {
-  const { phone } = req.body;
+export const signup = asyncHandler(async (req: Request, res: Response) => {
+  const { email, password } = req.body;
 
-  const { error } = await adminClient.auth.signInWithOtp({ phone });
-  if (error) {
-    throw new AppError(400, 'OTP_ERROR', error.message);
-  }
-
-  res.json({ success: true, expiresIn: 60 });
-});
-
-export const verifyCode = asyncHandler(async (req: Request, res: Response) => {
-  const { phone, code } = req.body;
-
-  const { data, error } = await adminClient.auth.verifyOtp({
-    phone,
-    token: code,
-    type: 'sms',
+  const { data, error } = await adminClient.auth.signUp({
+    email,
+    password,
   });
 
-  if (error || !data.session) {
-    throw new AppError(401, 'VERIFICATION_FAILED', error?.message ?? 'Verification failed');
+  if (error) {
+    throw new AppError(400, 'SIGNUP_ERROR', error.message);
   }
 
+  if (!data.session) {
+    // Email confirmation is enabled — user must confirm before signing in
+    res.json({ success: true, message: 'Check your email to confirm your account.' });
+    return;
+  }
+
+  // Auto-confirmed (e.g. confirmation disabled in Supabase settings)
   const userId = data.user!.id;
 
-  // The DB trigger handle_new_user() already creates the users + user_settings rows
-  // on auth.users INSERT (with display_name='' and phone_verified=false).
-  // We read first to detect new vs returning, then UPDATE to enhance the row.
-  const { data: existingUser } = await adminClient
+  const { data: userRow } = await adminClient
     .from('users')
     .select('*')
     .eq('id', userId)
     .single();
 
-  if (!existingUser) {
+  if (!userRow) {
     throw new AppError(500, 'USER_NOT_FOUND', 'User row not created by trigger');
   }
 
-  const isNewUser = !existingUser.phone_verified;
+  res.json({
+    token: data.session.access_token,
+    refreshToken: data.session.refresh_token,
+    user: mapUser(userRow),
+    isNewUser: true,
+  });
+});
 
-  const update: Record<string, unknown> = { phone_verified: true };
-  if (!existingUser.display_name) {
-    update.display_name = `User ${phone.slice(-4)}`;
+export const signin = asyncHandler(async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+
+  const { data, error } = await adminClient.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error || !data.session) {
+    throw new AppError(401, 'SIGNIN_FAILED', error?.message ?? 'Invalid email or password');
   }
 
-  const { data: userRow, error: updateError } = await adminClient
+  const userId = data.user.id;
+
+  const { data: userRow } = await adminClient
     .from('users')
-    .update(update)
-    .eq('id', userId)
     .select('*')
+    .eq('id', userId)
     .single();
 
-  if (updateError) {
-    throw new AppError(500, 'USER_UPDATE_ERROR', updateError.message);
+  if (!userRow) {
+    throw new AppError(500, 'USER_NOT_FOUND', 'User row not created by trigger');
+  }
+
+  const isNewUser = !userRow.email_verified;
+
+  if (!userRow.email_verified) {
+    await adminClient
+      .from('users')
+      .update({ email_verified: true })
+      .eq('id', userId);
+    userRow.email_verified = true;
   }
 
   res.json({
@@ -94,7 +110,6 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
 export const devLogin = asyncHandler(async (req: Request, res: Response) => {
   const devEmail = 'dev@circles.local';
   const devPassword = 'dev-password-123';
-  const devPhone = '+15555550100';
 
   // Try signing in first (user may already exist from a previous dev-login)
   const { data: signInData } = await adminClient.auth.signInWithPassword({
@@ -122,9 +137,7 @@ export const devLogin = asyncHandler(async (req: Request, res: Response) => {
   const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
     email: devEmail,
     password: devPassword,
-    phone: devPhone,
     email_confirm: true,
-    phone_confirm: true,
   });
 
   if (createError || !newUser.user) {
@@ -145,8 +158,7 @@ export const devLogin = asyncHandler(async (req: Request, res: Response) => {
   const { data: userRow, error: updateError } = await adminClient
     .from('users')
     .update({
-      phone: devPhone,
-      phone_verified: true,
+      email_verified: true,
       display_name: 'Dev User',
       city: 'San Francisco',
       country_code: 'US',
