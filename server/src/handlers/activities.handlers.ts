@@ -25,6 +25,10 @@ async function fetchActivityWithCount(activityId: string) {
   return { ...activity, current_participants: count ?? 0 };
 }
 
+/**
+ * BUG 14: Batch-fetch hosts and participant counts to eliminate N+1 queries.
+ * Reduces 2N+1 queries to 3 total.
+ */
 export const getNearby = asyncHandler(async (req: Request, res: Response) => {
   const { lat, lng, radius, status } = req.query as unknown as {
     lat: number;
@@ -46,24 +50,41 @@ export const getNearby = asyncHandler(async (req: Request, res: Response) => {
     activities = activities.filter((a: { status: string }) => a.status === status);
   }
 
-  // Enrich with host info and participant counts
-  const enriched = await Promise.all(
-    activities.map(async (a: { id: string; host_id: string }) => {
-      const { data: host } = await adminClient
-        .from('users')
-        .select('id, display_name, avatar_url')
-        .eq('id', a.host_id)
-        .single();
+  if (activities.length === 0) {
+    res.json({ activities: [] });
+    return;
+  }
 
-      const { count } = await adminClient
-        .from('activity_participants')
-        .select('*', { count: 'exact', head: true })
-        .eq('activity_id', a.id)
-        .eq('status', 'approved');
+  // Batch: collect all host IDs and activity IDs
+  const hostIds = [...new Set(activities.map((a: { host_id: string }) => a.host_id))];
+  const activityIds = activities.map((a: { id: string }) => a.id);
 
-      return { ...a, users: host, current_participants: count ?? 0 };
-    })
-  );
+  // Single query for all hosts
+  const { data: hosts } = await adminClient
+    .from('users')
+    .select('id, display_name, avatar_url')
+    .in('id', hostIds);
+
+  const hostMap = new Map((hosts || []).map((h: any) => [h.id, h]));
+
+  // Single query for all approved participant counts
+  const { data: participantRows } = await adminClient
+    .from('activity_participants')
+    .select('activity_id')
+    .in('activity_id', activityIds)
+    .eq('status', 'approved');
+
+  // Count participants per activity in JS
+  const countMap = new Map<string, number>();
+  for (const row of participantRows || []) {
+    countMap.set(row.activity_id, (countMap.get(row.activity_id) ?? 0) + 1);
+  }
+
+  const enriched = activities.map((a: { id: string; host_id: string }) => ({
+    ...a,
+    users: hostMap.get(a.host_id) ?? null,
+    current_participants: countMap.get(a.id) ?? 0,
+  }));
 
   res.json({ activities: enriched.map(mapActivity) });
 });
@@ -159,12 +180,16 @@ export const createActivity = asyncHandler(async (req: Request, res: Response) =
   if (insertError) throw new AppError(500, 'CREATE_ERROR', insertError.message);
 
   // Auto-add host as approved participant
-  await adminClient.from('activity_participants').insert({
+  const { error: participantError } = await adminClient.from('activity_participants').insert({
     activity_id: inserted.id,
     user_id: userId,
     status: 'approved',
     responded_at: new Date().toISOString(),
   });
+
+  if (participantError) {
+    console.error('Failed to add host as participant:', participantError.message);
+  }
 
   // Fetch the full activity with host info
   const activity = await fetchActivityWithCount(inserted.id);
@@ -222,6 +247,10 @@ export const updateActivity = asyncHandler(async (req: Request, res: Response) =
   res.json({ activity: mapActivity(enriched!) });
 });
 
+/**
+ * BUG 23: Delete related rows (messages, participants) before deleting the activity.
+ * Also broadcast deletion to connected clients.
+ */
 export const deleteActivity = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.userId!;
   const activityId = req.params.id;
@@ -235,7 +264,18 @@ export const deleteActivity = asyncHandler(async (req: Request, res: Response) =
   if (!existing) throw Errors.notFound('Activity');
   if (existing.host_id !== userId) throw Errors.forbidden('Only the host can delete this activity');
 
+  // Clean up related rows before deleting the activity
+  await adminClient.from('messages').delete().eq('activity_id', activityId);
+  await adminClient.from('activity_participants').delete().eq('activity_id', activityId);
   await adminClient.from('activities').delete().eq('id', activityId);
+
+  // Notify connected clients
+  try {
+    getIO().to(`activity-${activityId}`).emit('activity:status_change', {
+      activity_id: activityId,
+      status: 'deleted',
+    });
+  } catch { /* broadcast failure is non-fatal */ }
 
   res.json({ success: true });
 });
@@ -367,12 +407,16 @@ export const updateParticipant = asyncHandler(async (req: Request, res: Response
   res.json({ success: true });
 });
 
+/**
+ * BUG 28: If participant check fails but user is the host, self-heal by upserting
+ * the missing participant row so the host can always access their own chat.
+ */
 export const getMessages = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.userId!;
   const activityId = req.params.id;
   const { before, limit } = req.query as unknown as { before?: string; limit: number };
 
-  // Verify participant
+  // Verify participant or host
   const { data: participant } = await adminClient
     .from('activity_participants')
     .select('status')
@@ -381,7 +425,27 @@ export const getMessages = asyncHandler(async (req: Request, res: Response) => {
     .maybeSingle();
 
   if (!participant || participant.status !== 'approved') {
-    throw Errors.forbidden('Only approved participants can view messages');
+    // Check if user is the host
+    const { data: activity } = await adminClient
+      .from('activities')
+      .select('host_id')
+      .eq('id', activityId)
+      .single();
+
+    if (!activity || activity.host_id !== userId) {
+      throw Errors.forbidden('Only approved participants can view messages');
+    }
+
+    // Self-heal: upsert the missing participant row for the host
+    await adminClient.from('activity_participants').upsert(
+      {
+        activity_id: activityId,
+        user_id: userId,
+        status: 'approved',
+        responded_at: new Date().toISOString(),
+      },
+      { onConflict: 'activity_id,user_id' }
+    );
   }
 
   let query = adminClient
@@ -412,7 +476,7 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
   const activityId = req.params.id;
   const { content } = req.body;
 
-  // Verify approved participant
+  // Verify approved participant or host
   const { data: participant } = await adminClient
     .from('activity_participants')
     .select('status')
@@ -421,7 +485,27 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
     .maybeSingle();
 
   if (!participant || participant.status !== 'approved') {
-    throw Errors.forbidden('Only approved participants can send messages');
+    // Check if user is the host
+    const { data: activity } = await adminClient
+      .from('activities')
+      .select('host_id')
+      .eq('id', activityId)
+      .single();
+
+    if (!activity || activity.host_id !== userId) {
+      throw Errors.forbidden('Only approved participants can send messages');
+    }
+
+    // Self-heal: upsert the missing participant row for the host
+    await adminClient.from('activity_participants').upsert(
+      {
+        activity_id: activityId,
+        user_id: userId,
+        status: 'approved',
+        responded_at: new Date().toISOString(),
+      },
+      { onConflict: 'activity_id,user_id' }
+    );
   }
 
   const { data: message, error } = await adminClient

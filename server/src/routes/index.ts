@@ -11,4 +11,4 @@ routes.use('/auth', authRoutes);
 routes.use('/users', usersRoutes);
 routes.use('/circles', circlesRoutes);
 routes.use('/activities', activitiesRoutes);
-routes.use('/', notificationsRoutes);
+routes.use('/notifications', notificationsRoutes);

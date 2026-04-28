@@ -38,9 +38,10 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   let circle = null;
 
   if (membership) {
+    // BUG 13: Fetch circle and prompt separately to avoid FK assumption
     const { data: circleData } = await adminClient
       .from('circles')
-      .select('*, prompts(*)')
+      .select('*')
       .eq('id', membership.circle_id)
       .single();
 
@@ -51,6 +52,28 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         .eq('circle_id', membership.circle_id)
         .eq('status', 'active');
 
+      // Conditionally fetch prompt if current_prompt_id is set
+      let prompt = null;
+      if (circleData.current_prompt_id) {
+        const { data: promptData } = await adminClient
+          .from('prompts')
+          .select('*')
+          .eq('id', circleData.current_prompt_id)
+          .maybeSingle();
+
+        if (promptData) {
+          prompt = {
+            id: promptData.id,
+            textEn: promptData.text_en,
+            textJa: promptData.text_ja ?? undefined,
+            textZh: promptData.text_zh ?? undefined,
+            category: promptData.category,
+            isActive: promptData.is_active,
+            createdAt: promptData.created_at,
+          };
+        }
+      }
+
       circle = {
         id: circleData.id,
         name: circleData.name,
@@ -60,17 +83,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         createdAt: circleData.created_at,
         updatedAt: circleData.updated_at,
         members: (members || []).map(mapCircleMember),
-        prompt: circleData.prompts
-          ? {
-              id: circleData.prompts.id,
-              textEn: circleData.prompts.text_en,
-              textJa: circleData.prompts.text_ja ?? undefined,
-              textZh: circleData.prompts.text_zh ?? undefined,
-              category: circleData.prompts.category,
-              isActive: circleData.prompts.is_active,
-              createdAt: circleData.prompts.created_at,
-            }
-          : null,
+        prompt,
       };
     }
   }

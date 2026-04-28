@@ -25,15 +25,38 @@ export const getMyCircle = asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
+  // BUG 13: Fetch circle and prompt separately to avoid FK assumption
   const { data: circle } = await adminClient
     .from('circles')
-    .select('*, prompts(*)')
+    .select('*')
     .eq('id', circleId)
     .single();
 
   if (!circle) {
     res.json(null);
     return;
+  }
+
+  // Conditionally fetch prompt if current_prompt_id is set
+  let prompt = null;
+  if (circle.current_prompt_id) {
+    const { data: promptData } = await adminClient
+      .from('prompts')
+      .select('*')
+      .eq('id', circle.current_prompt_id)
+      .maybeSingle();
+
+    if (promptData) {
+      prompt = {
+        id: promptData.id,
+        textEn: promptData.text_en,
+        textJa: promptData.text_ja ?? undefined,
+        textZh: promptData.text_zh ?? undefined,
+        category: promptData.category,
+        isActive: promptData.is_active,
+        createdAt: promptData.created_at,
+      };
+    }
   }
 
   const { data: members } = await adminClient
@@ -53,17 +76,7 @@ export const getMyCircle = asyncHandler(async (req: Request, res: Response) => {
       updatedAt: circle.updated_at,
     },
     members: (members || []).map(mapCircleMember),
-    prompt: circle.prompts
-      ? {
-          id: circle.prompts.id,
-          textEn: circle.prompts.text_en,
-          textJa: circle.prompts.text_ja ?? undefined,
-          textZh: circle.prompts.text_zh ?? undefined,
-          category: circle.prompts.category,
-          isActive: circle.prompts.is_active,
-          createdAt: circle.prompts.created_at,
-        }
-      : null,
+    prompt,
   });
 });
 
@@ -165,6 +178,7 @@ export const leaveCircle = asyncHandler(async (req: Request, res: Response) => {
 
 export const getMessages = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.userId!;
+  // BUG 12: This cast is safe — Zod validation middleware replaces req.query with parsed/coerced data
   const { before, limit } = req.query as unknown as { before?: string; limit: number };
 
   const circleId = await getActiveCircleId(userId);

@@ -6,9 +6,20 @@ import { registerHandlers } from './handlers';
 
 let io: TypedServer | null = null;
 
+// BUG 20: Configure socket CORS based on environment
+function getSocketCorsOrigin(): string | string[] | boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return [
+      'https://circles.app',
+      'https://www.circles.app',
+    ];
+  }
+  return true;
+}
+
 export function initSocket(httpServer: HttpServer): TypedServer {
   io = new Server(httpServer, {
-    cors: { origin: '*' },
+    cors: { origin: getSocketCorsOrigin() },
     transports: ['websocket'],
   }) as TypedServer;
 
