@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
 
 from auth import router as auth_router
+from circles import router as circles_router
+from matching import router as matching_router
 from profile import router as profile_router
 from reference import router as reference_router
 from supabase_client import supabase_anon
@@ -9,6 +11,8 @@ app = FastAPI(title="circles-api")
 app.include_router(auth_router)
 app.include_router(profile_router)
 app.include_router(reference_router)
+app.include_router(matching_router)
+app.include_router(circles_router)
 
 
 @app.get("/")
